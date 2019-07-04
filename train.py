@@ -4,12 +4,16 @@ import subprocess
 import os
 from PIL import Image
 import numpy as np
-from tensorflow.keras.models import Sequential
-from tensorflow.keras import layers
-from tensorflow.keras import backend as K
-from tensorflow.keras.callbacks import Callback
+# from tensorflow.keras.models import Sequential
+# from tensorflow.keras import layers
+# from tensorflow.keras import backend as K
+# from tensorflow.keras.callbacks import Callback
 import wandb
 from wandb.keras import WandbCallback
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+import torch
+from model import Generator
 
 run = wandb.init(project='superres')
 config = run.config
@@ -56,7 +60,20 @@ def image_generator(batch_size, img_dir):
         yield (small_images, large_images)
         counter += batch_size
 
-
+class SRDataset(Dataset):
+    def __init__(self, img_dir):
+        self.input_filenames = glob.glob(img_dir + "/*-in.jpg")
+    
+    def __len__(self):
+        return len(self.input_filenames)
+    
+    def __getitem__(self, idx):
+        img_name = self.input_filenames[idx]
+        small_img = np.array(Image.open(img_name)).transpose(2, 0, 1).astype(np.float32)/255.0
+        large_img = np.array(Image.open(img_name.replace("-in.jpg", "-out.jpg"))).transpose(2, 0, 1).astype(np.float32)/255.0
+        return small_img, large_img
+        
+        
 def perceptual_distance(y_true, y_pred):
     """Calculate perceptual distance, DO NOT ALTER"""
     y_true *= 255
@@ -69,39 +86,45 @@ def perceptual_distance(y_true, y_pred):
     return K.mean(K.sqrt((((512+rmean)*r*r)/256) + 4*g*g + (((767-rmean)*b*b)/256)))
 
 
-val_generator = image_generator(config.batch_size, val_dir)
-in_sample_images, out_sample_images = next(val_generator)
+train_loader = DataLoader(SRDataset(train_dir), batch_size=config.batch_size, shuffle=True)
+val_loader = DataLoader(SRDataset(val_dir), batch_size=config.batch_size, shuffle=True)
 
+model_g = Generator()
+model_g.to(torch.device("cuda"))
+criterion_g = nn.MSELoss()
+optimizer_g = torch.optim.Adam(model_g.parameters(), lr=1e-3)
 
-class ImageLogger(Callback):
-    def on_epoch_end(self, epoch, logs):
-        preds = self.model.predict(in_sample_images)
-        in_resized = []
-        for arr in in_sample_images:
-            # Simple upsampling
-            in_resized.append(arr.repeat(8, axis=0).repeat(8, axis=1))
-        wandb.log({
-            "examples": [wandb.Image(np.concatenate([in_resized[i] * 255, o * 255, out_sample_images[i] * 255], axis=1)) for i, o in enumerate(preds)]
-        }, commit=False)
+for epoch in range(config.num_epochs):
+    train_loss_g = 0
+    num_batches = 0
+    for small, big in train_loader:
+        small, big = small.to(torch.device("cuda")), big.to(torch.device("cuda"))
+        model_g.zero_grad()
+        big_hat = model_g(small)
+        loss_g = criterion_g(big_hat, big)
+        train_loss_g += loss_g.item()
+        loss_g.backward()
+        optimizer_g.step()
+        num_batches += 1
+    
+    train_loss_g /= num_batches
+    
+    # check validation loss after every epoch
+    val_loss_g = 0
+    num_batches = 0
+    for small, big in val_loader:
+        small, big = small.to(torch.device("cuda")), big.to(torch.device("cuda"))
+        with torch.no_grad():
+            big_hat = model_g(small)
+            loss_g = criterion_g(big_hat, big)
+            val_loss_g += loss_g.item()
+            num_batches += 1
+    
+    val_loss_g /= num_batches
+    
+    # print train, val loss after every epoch
+    print("Epoch {}/{}: train_loss_g = {}, val_loss_g = {}".format(epoch, 
+            config.num_epochs, train_loss_g, val_loss_g))
 
-
-model = Sequential()
-model.add(layers.Conv2D(3, (3, 3), activation='relu', padding='same',
-                        input_shape=(config.input_width, config.input_height, 3)))
-model.add(layers.UpSampling2D())
-model.add(layers.Conv2D(3, (3, 3), activation='relu', padding='same'))
-model.add(layers.UpSampling2D())
-model.add(layers.Conv2D(3, (3, 3), activation='relu', padding='same'))
-model.add(layers.UpSampling2D())
-model.add(layers.Conv2D(3, (3, 3), activation='relu', padding='same'))
-
-# DONT ALTER metrics=[perceptual_distance]
-model.compile(optimizer='adam', loss='mse',
-              metrics=[perceptual_distance])
-
-model.fit_generator(image_generator(config.batch_size, train_dir),
-                    steps_per_epoch=config.steps_per_epoch,
-                    epochs=config.num_epochs, callbacks=[
-                        ImageLogger(), WandbCallback()],
-                    validation_steps=config.val_steps_per_epoch,
-                    validation_data=val_generator)
+    torch.save(model_g.state_dict(), "model_dict.pt")
+    torch.save(model_g, "model.pt")
