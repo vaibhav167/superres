@@ -10,12 +10,11 @@ from tensorflow.keras import backend as K
 from tensorflow.keras.callbacks import Callback
 import wandb
 from wandb.keras import WandbCallback
-from model import Generator
 
 run = wandb.init(project='superres')
 config = run.config
 
-config.num_epochs = 50
+config.num_epochs = 5
 config.batch_size = 32
 config.input_height = 32
 config.input_width = 32
