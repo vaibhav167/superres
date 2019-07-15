@@ -1,16 +1,21 @@
 import os
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+# os.environ["CUDA_VISIBLE_DEVICES"] = ""
 import gc
 import numpy as np
 from PIL import Image
 from random import choice
 from keras.utils import Sequence
 import glob
+from tensorflow.keras import backend as K
+import sys
 
 try:
     import matplotlib.pyplot as plt
 except:
     pass
 
+from pdb import set_trace as bp
 
 class DataLoader(Sequence):
     def __init__(self, datapath, batch_size, height_hr, width_hr, scale, crops_per_image):
@@ -86,7 +91,6 @@ class DataLoader(Sequence):
 
     def load_batch(self, idx=0, img_paths=None, training=True, bicubic=False):
         """Loads a batch of images from datapath folder""" 
-
         # Starting index to look in
         cur_idx = 0
         if not img_paths:
@@ -109,21 +113,21 @@ class DataLoader(Sequence):
                 # Load image
                 img_hr, img_lr = None, None
                 if img_paths:
-                    img_hr = self.load_img(img_paths[cur_idx])
-                    img_lr = self.load_img(img_paths[cur_idx].replace("-in.jpg", "-out.jpg"))
+                    img_lr = self.load_img(img_paths[cur_idx])
+                    img_hr = self.load_img(img_paths[cur_idx].replace("-in.jpg", "-out.jpg"))
                 else:
-                    img_hr = self.load_img(self.img_paths[cur_idx])
-                    img_lr = self.load_img(self.img_paths[cur_idx].replace("-in.jpg", "-out.jpg"))
+                    img_lr = self.load_img(self.img_paths[cur_idx])
+                    img_hr = self.load_img(self.img_paths[cur_idx].replace("-in.jpg", "-out.jpg"))
 
                 # Create HR/LR images to go through
-                img_crops = []
-                if training:
-                    for i in range(self.crops_per_image):
-                        #print(idx, cur_idx, "Loading crop: ", i)
-                        img_crops_hr.append(self.random_crop(img_hr, (self.height_hr, self.width_hr)))
-                        img_crops_lr.append(self.random_crop(img_lr, (self.height_hr, self.width_hr)))
-                else:
-                    img_crops_hr = [img_hr]
+                img_crops_hr, img_crops_lr = [img_hr], [img_lr]
+#                 if training:
+#                     for i in range(self.crops_per_image):
+#                         #print(idx, cur_idx, "Loading crop: ", i)
+#                         img_crops_hr.append(self.random_crop(img_hr, (self.height_hr, self.width_hr)))
+#                         img_crops_lr.append(self.random_crop(img_lr, (self.height_lr, self.width_lr)))
+#                 else:
+#                     img_crops_hr = [img_hr]
 
                 # Downscale the HR images and save
                 for img_hr, img_lr in zip(img_crops_hr, img_crops_lr):
@@ -146,7 +150,11 @@ class DataLoader(Sequence):
                     imgs_lr.append(img_lr)
                 
             except Exception as e:
-                # print(e)
+                bp()
+                exc_type, exc_obj, exc_tb = sys.exc_info()
+                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+                print(exc_type, fname, exc_tb.tb_lineno)
+                print(e)
                 pass
             finally:
                 cur_idx += 1
@@ -159,7 +167,7 @@ class DataLoader(Sequence):
 
         # Return image batch
         return imgs_lr, imgs_hr
-
+        
 
 def plot_test_images(model, loader, datapath_test, test_output, epoch, name='SRGAN'):
     """        
@@ -169,7 +177,7 @@ def plot_test_images(model, loader, datapath_test, test_output, epoch, name='SRG
     :param string test_output: Directory path for outputting testing images
     :param int epoch: Identifier for how long the model has been trained
     """
-
+    bp()
     try:
         
         # Get the location of test images
@@ -238,4 +246,16 @@ def plot_test_images(model, loader, datapath_test, test_output, epoch, name='SRG
             plt.close()
             gc.collect()
     except Exception as e:
+        bp()
         print(">> Could not perform printing. Maybe matplotlib is not installed.")
+
+def perceptual_distance(y_true, y_pred):
+    """Calculate perceptual distance, DO NOT ALTER"""
+    y_true *= 255
+    y_pred *= 255
+    rmean = (y_true[:, :, :, 0] + y_pred[:, :, :, 0]) / 2
+    r = y_true[:, :, :, 0] - y_pred[:, :, :, 0]
+    g = y_true[:, :, :, 1] - y_pred[:, :, :, 1]
+    b = y_true[:, :, :, 2] - y_pred[:, :, :, 2]
+
+    return K.mean(K.sqrt((((512+rmean)*r*r)/256) + 4*g*g + (((767-rmean)*b*b)/256)))

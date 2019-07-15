@@ -1,4 +1,6 @@
 import os
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+# os.environ["CUDA_VISIBLE_DEVICES"] = ""
 import sys
 import gc
 import numpy as np
@@ -16,6 +18,10 @@ sys.stderr = stderr
 from libs.srgan import SRGAN
 from libs.util import plot_test_images, DataLoader
 
+import wandb
+from wandb.keras import WandbCallback
+
+from pdb import set_trace as bp
 
 # Sample call
 """
@@ -110,7 +116,18 @@ def parse_args():
         type=str, default='./data/logs/',
         help='Where to output tensorboard logs during training'
     )
-        
+
+    parser.add_argument(
+        '-height_lr', '--height_lr',
+        type=int, default=32,
+        help='Height of low res image'
+    )
+
+    parser.add_argument(
+        '-width_lr', '--width_lr',
+        type=int, default=32,
+        help='Width of low res image'
+    )
     return  parser.parse_args()
 
 def reset_layer_names(args):
@@ -194,10 +211,12 @@ if __name__ == '__main__':
         "steps_per_validation": 5000,
         "log_weight_path": args.weight_path, 
         "log_tensorboard_path": args.log_path,        
-        "log_tensorboard_update_freq": 1000,
+        "log_tensorboard_update_freq": 100,
         "log_test_path": args.test_path,
-        "crops_per_image": args.crops_per_image        
+        "crops_per_image": args.crops_per_image,
     }
+    
+    run = wandb.init(project='superres')
 
     # Generator weight paths
     srresnet_path = os.path.join(args.weight_path, 'SRResNet_'+args.dataname+'_{}X'.format(args.scale))
@@ -208,7 +227,7 @@ if __name__ == '__main__':
     ######################################################
 
     # If we are doing transfer learning, only train top layer of the generator
-    # And load weights from lower-upscaling model    
+    # And load weights from lower-upscaling model
     if args.stage in ['all', 'mse']:
         if args.scaleFrom:
 
@@ -216,20 +235,20 @@ if __name__ == '__main__':
             BASE_G, BASE_D = reset_layer_names(args)
 
             # Load the properly named weights onto this model and freeze lower-level layers
-            gan = SRGAN(upscaling_factor=args.scale)
+            gan = SRGAN(height_lr=args.height_lr, width_lr=args.width_lr, upscaling_factor=args.scale)
             gan.load_weights(BASE_G, BASE_D, by_name=True)
             gan_freeze_layers(args, gan)
             generator_train(args, gan, common, 1)
 
             # Train entire generator for 3 epochs
-            gan = SRGAN(upscaling_factor=args.scale)
+            gan = SRGAN(height_lr=args.height_lr, width_lr=args.width_lr, upscaling_factor=args.scale)
             gan.load_weights(srresnet_path)
             generator_train(args, gan, common, 3)
         
         else:
 
             # As in paper - train for 10 epochs
-            gan = SRGAN(upscaling_factor=args.scale)    
+            gan = SRGAN(height_lr=args.height_lr, width_lr=args.width_lr, upscaling_factor=args.scale)
             generator_train(args, gan, common, 10)        
 
     ## SECOND STAGE: TRAINING GAN WITH HIGH LEARNING RATE

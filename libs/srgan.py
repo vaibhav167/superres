@@ -1,5 +1,7 @@
 #! /usr/bin/python
 import os
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+# os.environ["CUDA_VISIBLE_DEVICES"] = ""
 import sys
 import pickle
 import datetime
@@ -10,6 +12,7 @@ import numpy as np
 stderr = sys.stderr
 sys.stderr = open(os.devnull, 'w')
 import tensorflow as tf
+from keras import layers
 from keras.models import Sequential, Model
 from keras.layers import Input, Activation, Add
 from keras.layers import BatchNormalization, LeakyReLU, PReLU, Conv2D, Dense
@@ -22,8 +25,11 @@ from keras import backend as K
 from keras.callbacks import TensorBoard, ModelCheckpoint, LambdaCallback
 sys.stderr = stderr
 
-from libs.util import DataLoader, plot_test_images
+from libs.util import DataLoader, plot_test_images, perceptual_distance
 
+from wandb.keras import WandbCallback
+
+from pdb import set_trace as bp
 
 class SRGAN():
     """
@@ -148,7 +154,19 @@ class SRGAN():
         if isinstance(x, np.ndarray):
             return preprocess_input((x+1)*127.5)
         else:            
-            return Lambda(lambda x: preprocess_input(tf.add(x, 1) * 127.5))(x)     
+            return Lambda(lambda x: preprocess_input(tf.add(x, 1) * 127.5))(x)
+    
+#     def build_generator(self, residual_blocks=8):
+#         model = Sequential()
+#         model.add(layers.Conv2D(3, (3, 3), activation='relu', padding='same',
+#                         input_shape=(self.width_lr, self.height_lr, 3)))
+#         model.add(layers.UpSampling2D())
+#         model.add(layers.Conv2D(3, (3, 3), activation='relu', padding='same'))
+#         model.add(layers.UpSampling2D())
+#         model.add(layers.Conv2D(3, (3, 3), activation='relu', padding='same'))
+#         model.add(layers.UpSampling2D())
+#         model.add(layers.Conv2D(3, (3, 3), activation='relu', padding='same'))
+#         return model
 
     def build_generator(self, residual_blocks=16):
         """
@@ -158,18 +176,18 @@ class SRGAN():
         :param int residual_blocks: How many residual blocks to use
         :return: the compiled model
         """
-
+        N_FILTERS = 64
         def residual_block(input):
-            x = Conv2D(64, kernel_size=3, strides=1, padding='same')(input)
+            x = Conv2D(N_FILTERS, kernel_size=3, strides=1, padding='same')(input)
             x = BatchNormalization(momentum=0.8)(x)
             x = PReLU(shared_axes=[1,2])(x)            
-            x = Conv2D(64, kernel_size=3, strides=1, padding='same')(x)
+            x = Conv2D(N_FILTERS, kernel_size=3, strides=1, padding='same')(x)
             x = BatchNormalization(momentum=0.8)(x)
             x = Add()([x, input])
             return x
 
         def upsample(x, number):
-            x = Conv2D(256, kernel_size=3, strides=1, padding='same', name='upSampleConv2d_'+str(number))(x)
+            x = Conv2D(N_FILTERS*4, kernel_size=3, strides=1, padding='same', name='upSampleConv2d_'+str(number))(x)
             x = self.SubpixelConv2D('upSampleSubPixel_'+str(number), 2)(x)
             x = PReLU(shared_axes=[1,2], name='upSamplePReLU_'+str(number))(x)
             return x
@@ -178,7 +196,7 @@ class SRGAN():
         lr_input = Input(shape=(None, None, 3))
 
         # Pre-residual
-        x_start = Conv2D(64, kernel_size=9, strides=1, padding='same')(lr_input)
+        x_start = Conv2D(N_FILTERS, kernel_size=9, strides=1, padding='same')(lr_input)
         x_start = PReLU(shared_axes=[1,2])(x_start)
 
         # Residual blocks
@@ -187,7 +205,7 @@ class SRGAN():
             r = residual_block(r)
 
         # Post-residual block
-        x = Conv2D(64, kernel_size=3, strides=1, padding='same')(r)
+        x = Conv2D(N_FILTERS, kernel_size=3, strides=1, padding='same')(r)
         x = BatchNormalization(momentum=0.8)(x)
         x = Add()([x, x_start])
         
@@ -256,8 +274,8 @@ class SRGAN():
         # Create a high resolution image from the low resolution one
         generated_hr = self.generator(img_lr)
         generated_features = self.vgg(
-            self.preprocess_vgg(generated_hr)
-        )
+                self.preprocess_vgg(generated_hr)
+            )
 
         # In the combined model we only train the generator
         self.discriminator.trainable = False
@@ -285,11 +303,10 @@ class SRGAN():
 
     def compile_generator(self, model):
         """Compile the generator with appropriate optimizer"""
-        model.compile(
-            loss=self.gan_loss,
-            optimizer=Adam(self.gen_lr, 0.9),
-            metrics=['mse', self.PSNR]
-        )
+        model.compile(optimizer='adam', loss='mse',
+              metrics=[perceptual_distance])
+        print("----------------GENERATOR----------------")
+        print(model.summary())
 
     def compile_discriminator(self, model):
         """Compile the generator with appropriate optimizer"""
@@ -298,6 +315,8 @@ class SRGAN():
             optimizer=Adam(self.dis_lr, 0.9),
             metrics=['accuracy']
         )
+        print("----------------DISCRIMINATOR----------------")
+        print(model.summary())
 
     def compile_srgan(self, model):
         """Compile the GAN with appropriate optimizer"""
@@ -306,6 +325,8 @@ class SRGAN():
             loss_weights=self.loss_weights,
             optimizer=Adam(self.gen_lr, 0.9)
         )
+        print("----------------SRGAN----------------")
+        print(model.summary())
     
     def PSNR(self, y_true, y_pred):
         """
@@ -389,7 +410,7 @@ class SRGAN():
                 )
             )
             callbacks.append(testplotting)
-                            
+
         # Fit the model
         self.generator.fit_generator(
             train_loader,
@@ -399,7 +420,8 @@ class SRGAN():
             validation_steps=steps_per_validation,
             callbacks=callbacks,
             use_multiprocessing=workers>1,
-            workers=workers
+            workers=workers,
+            verbose=1
         )
 
     def train_srgan(self, 
