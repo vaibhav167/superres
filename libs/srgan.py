@@ -573,8 +573,8 @@ class SRGAN():
                     ))                
 
             # If test images are supplied, run model on them and save to log_test_path
-            if datapath_test and epoch % log_test_frequency == 0:
-                plot_test_images(self, loader, datapath_test, log_test_path, epoch)
+            #if datapath_test and epoch % log_test_frequency == 0:
+            #    plot_test_images(self, loader, datapath_test, log_test_path, epoch)
 
             # Check if we should save the network weights
             if log_weight_frequency and epoch % log_weight_frequency == 0:
