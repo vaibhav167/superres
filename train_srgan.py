@@ -177,7 +177,7 @@ def gan_train(args, gan, common, first_epoch=10000):
     gan.train_srgan(
         epochs=10000,
         dataname='SRGAN_'+args.dataname,
-        print_frequency=1000,    
+        print_frequency=100,    
         log_weight_frequency=500,
         log_tensorboard_name='SRGAN_'+args.dataname,
         log_test_frequency=1000,

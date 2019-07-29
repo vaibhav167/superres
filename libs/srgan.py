@@ -231,7 +231,7 @@ class SRGAN():
         model = Model(inputs=lr_input, outputs=hr_output)        
         return model    
 
-    def build_discriminator(self, filters=64):
+    def build_discriminator(self, filters=16):
         """
         Build the discriminator network according to description in the paper.
 
