@@ -177,7 +177,6 @@ def plot_test_images(model, loader, datapath_test, test_output, epoch, name='SRG
     :param string test_output: Directory path for outputting testing images
     :param int epoch: Identifier for how long the model has been trained
     """
-    bp()
     try:
         
         # Get the location of test images

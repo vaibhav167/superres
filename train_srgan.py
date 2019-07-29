@@ -172,16 +172,16 @@ def gan_freeze_layers(args, gan):
     # Compile generator with frozen layers
     gan.compile_generator(gan.generator)
 
-def gan_train(args, gan, common, first_epoch=1000000):
+def gan_train(args, gan, common, first_epoch=10000):
     '''Just a convenience function for training the GAN'''
     gan.train_srgan(
-        epochs=100000,
+        epochs=10000,
         dataname='SRGAN_'+args.dataname,
-        print_frequency=10000,    
-        log_weight_frequency=5000,
+        print_frequency=1000,    
+        log_weight_frequency=500,
         log_tensorboard_name='SRGAN_'+args.dataname,
-        log_test_frequency=10000,
-        first_epoch=1000000,
+        log_test_frequency=1000,
+        first_epoch=100000,
         **common
     )
 
@@ -190,7 +190,7 @@ def generator_train(args, gan, common, epochs=1):
     gan.train_generator(
         epochs=1,
         dataname='SRResNet'+args.dataname,        
-        steps_per_epoch=100000,        
+        steps_per_epoch=10000,        
         log_tensorboard_name='SRResNet'+args.dataname,        
         **common
     )
@@ -208,7 +208,7 @@ if __name__ == '__main__':
         "datapath_train": args.train,
         "datapath_validation": args.validation,
         "datapath_test":args.test,
-        "steps_per_validation": 5000,
+        "steps_per_validation": 500,
         "log_weight_path": args.weight_path, 
         "log_tensorboard_path": args.log_path,        
         "log_tensorboard_update_freq": 100,
@@ -219,7 +219,7 @@ if __name__ == '__main__':
     run = wandb.init(project='superres')
 
     # Generator weight paths
-    srresnet_path = os.path.join(args.weight_path, 'SRResNet_'+args.dataname+'_{}X'.format(args.scale))
+    srresnet_path = os.path.join(args.weight_path, 'SRResNet'+args.dataname+'_{}X'.format(args.scale))
     srrgan_G_path = os.path.join(args.weight_path, 'SRGAN_'+args.dataname+'_generator_'+str(args.scale)+'X.h5')
     srrgan_D_path = os.path.join(args.weight_path, 'SRGAN_'+args.dataname+'_discriminator_'+str(args.scale)+'X.h5')
 
@@ -248,17 +248,20 @@ if __name__ == '__main__':
         else:
 
             # As in paper - train for 10 epochs
+            print("---------------Stage: MSE---------------")
             gan = SRGAN(height_lr=args.height_lr, width_lr=args.width_lr, upscaling_factor=args.scale)
-            generator_train(args, gan, common, 10)        
+            gan.load_weights(srresnet_path)
+            generator_train(args, gan, common, 10)
+            print("MSE stage complete")        
 
     ## SECOND STAGE: TRAINING GAN WITH HIGH LEARNING RATE
     ######################################################
 
     # Re-initialize & train the GAN - load just created generator weights
     if args.stage in ['all', 'gan']:
-        gan = SRGAN(upscaling_factor=args.scale)
+        gan = SRGAN(height_lr=args.height_lr, width_lr=args.width_lr, upscaling_factor=args.scale)
         gan.load_weights(srresnet_path)
-        gan_train(args, gan, common, 1000000)
+        gan_train(args, gan, common, 10000)
 
     ## THIRD STAGE: FINE TUNE GAN WITH LOW LEARNING RATE
     ######################################################
@@ -270,5 +273,5 @@ if __name__ == '__main__':
             upscaling_factor=args.scale
         )
         gan.load_weights(srrgan_G_path, srrgan_D_path)
-        gan_train(args, gan, common, 1100000)
+        gan_train(args, gan, common, 110000)
         
